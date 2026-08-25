@@ -26,6 +26,8 @@ npm start                   # apre tutte le lezioni e le porta al 100%
 - `concurrency` — `0` = tutte insieme; altrimenti max tab contemporanee.
 - `autoClose` — `false` lascia le tab aperte a fine video (consigliato, così partono gli ultimi heartbeat).
 - `maxMinutesPerVideo` — cap di sicurezza per lezione.
+- `skipLessons` / `maxLessons` — finestra di lezioni da aprire: salta le prime `skipLessons`
+  e aprine al massimo `maxLessons` (0 = tutte). Es. `skipLessons: 10, maxLessons: 10` = lezioni 11–20.
 
 ## Note
 - I video vanno in **tempo reale**: aprendole tutte insieme finisci in ~durata del video più lungo,

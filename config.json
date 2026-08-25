@@ -1,6 +1,6 @@
 {
   "startUrl": "https://www.uninettunouniversity.net/en/blockedurl.aspx",
-  "lessonsListUrl": "https://www.uninettunouniversity.net/en/cyberspaziovideotecaitems.aspx?faculty=&degree=164&planid=875&courseid=4396&lf=it&type=11&tutorid=93&menumode=tutor",
+  "lessonsListUrl": "https://www.uninettunouniversity.net/it/cyberspaziovideotecaitems.aspx?faculty=&degree=164&planid=875&courseid=4396&lf=it&type=11&tutorid=93&menumode=tutor",
   "linkSelector": "a[href*=\"cyberspaziomaterialedidattico.aspx\"]",
   "linkIncludes": ["type=11"],
   "linkExcludes": ["&tc=", "&numarg="],
@@ -9,7 +9,8 @@
   "channel": "chrome",
   "headless": false,
   "concurrency": 0,
-  "maxLessons": 2,
+  "skipLessons": 34,
+  "maxLessons": 8,
   "staggerMs": 1200,
   "pollSeconds": 5,
   "maxMinutesPerVideo": 70,

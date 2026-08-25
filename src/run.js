@@ -90,16 +90,27 @@ while (urls.length === 0) {
   }
 }
 
-// Per i test: maxLessons limita quante lezioni aprire (0 = tutte).
+// skipLessons salta le prime N (già viste); maxLessons limita quante aprirne (0 = tutte).
+const total = urls.length;
+const skip = cfg.skipLessons && cfg.skipLessons > 0 ? cfg.skipLessons : 0;
+if (skip > 0) {
+  urls = urls.slice(skip);
+  if (urls.length === 0) {
+    console.log(`skipLessons=${skip} ma le lezioni sono ${total}: niente da aprire.`);
+    process.exit(0);
+  }
+}
 if (cfg.maxLessons && cfg.maxLessons > 0 && urls.length > cfg.maxLessons) {
-  console.log(`(maxLessons=${cfg.maxLessons}: apro solo le prime ${cfg.maxLessons} di ${urls.length})`);
   urls = urls.slice(0, cfg.maxLessons);
+}
+if (skip > 0 || urls.length < total) {
+  console.log(`(apro le lezioni ${skip + 1}–${skip + urls.length} di ${total})`);
 }
 
 const limit = cfg.concurrency && cfg.concurrency > 0 ? cfg.concurrency : urls.length;
 console.log(`\nTrovate ${urls.length} lezioni. Apro fino a ${limit} in parallelo (tempo reale).\n`);
 
-const tasks = urls.map((url, i) => ({ i: i + 1, url, page: null, done: false, status: null }));
+const tasks = urls.map((url, i) => ({ i: skip + i + 1, url, page: null, done: false, status: null }));
 
 // Apre una lezione in una nuova tab e avvia il play.
 async function open(task) {
