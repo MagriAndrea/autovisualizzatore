@@ -3,12 +3,17 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { valori } from './impostazioni.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(__dirname, '..');
 
 export function loadConfig() {
-  const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+  // config.json = parametri tecnici; impostazioni.json = quelli modificabili dal menu.
+  const cfg = {
+    ...JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')),
+    ...valori(),
+  };
   // Risolvi il profilo Chrome in path assoluto.
   cfg.userDataDir = path.resolve(ROOT, cfg.userDataDir);
   return cfg;
@@ -92,7 +97,3 @@ export async function nudgePlay(page) {
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-export function ensureDir(p) {
-  fs.mkdirSync(p, { recursive: true });
-}

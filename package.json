@@ -5,7 +5,6 @@
   "type": "module",
   "description": "Apre in parallelo le videolezioni Uninettuno e le fa scorrere fino in fondo, aggirando la pausa-in-background del player.",
   "scripts": {
-    "discover": "node src/discover.js",
     "start": "node src/run.js"
   },
   "dependencies": {

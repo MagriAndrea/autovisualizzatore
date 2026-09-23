@@ -9,8 +9,6 @@
   "channel": "chrome",
   "headless": false,
   "concurrency": 0,
-  "skipLessons": 34,
-  "maxLessons": 8,
   "staggerMs": 1200,
   "pollSeconds": 5,
   "maxMinutesPerVideo": 70,

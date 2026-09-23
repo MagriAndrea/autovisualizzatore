@@ -1,0 +1,16 @@
+[
+  {
+    "nome": "startFromLesson",
+    "valore": 1,
+    "min": 1,
+    "descrizione": "Numero della lezione da cui partire (1 = dalla prima). Le lezioni precedenti vengono saltate.",
+    "note": "Utile per riprendere da dove eri rimasto: se hai già visto fino alla 34, metti 35."
+  },
+  {
+    "nome": "maxLessons",
+    "valore": 8,
+    "min": 0,
+    "descrizione": "Numero massimo di lezioni da guardare contemporaneamente (0 = tutte quelle rimanenti).",
+    "note": "Consiglio massimo 6-7 lezioni: oltre, i video cominciano a bloccarsi."
+  }
+]

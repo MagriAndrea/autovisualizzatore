@@ -1,12 +1,7 @@
 // Runner principale: apre l'elenco lezioni, raccoglie gli URL, li apre TUTTI in parallelo
 // (tab spoofate come "visibili") e monitora l'avanzamento di ogni video fino al 100%.
-import readline from 'node:readline';
 import { loadConfig, launch, readVideo, nudgePlay, sleep } from './browser.js';
-
-function ask(question) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((res) => rl.question(question, (a) => { rl.close(); res(a); }));
-}
+import { menu, ask } from './menu.js';
 
 function fmt(sec) {
   if (sec == null || !Number.isFinite(sec)) return '--:--';
@@ -14,6 +9,7 @@ function fmt(sec) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+await menu();
 const cfg = loadConfig();
 if (!cfg.linkSelector) {
   console.error('\nManca linkSelector in config.json (il selettore CSS dei link-lezione).');
@@ -70,7 +66,7 @@ async function scrapeOpenTabs() {
 // 1) Apri la pagina di login. 2) L'utente accede e va sulla videoteca.
 try { await lister.goto(cfg.startUrl, { waitUntil: 'domcontentloaded' }); } catch (_) {}
 
-console.log('\n──────── Autovisualizzatore ────────');
+console.log('\n──────── Avvio ────────');
 console.log('1) Fai il LOGIN nella finestra di Chrome che si è aperta.');
 console.log('2) Vai alla VIDEOTECA dell\'esame che vuoi guardare.');
 console.log('3) Incolla qui l\'URL della videoteca e premi INVIO');
@@ -90,13 +86,15 @@ while (urls.length === 0) {
   }
 }
 
-// skipLessons salta le prime N (già viste); maxLessons limita quante aprirne (0 = tutte).
+// startFromLesson = prima lezione da aprire (1-based); maxLessons limita quante aprirne (0 = tutte).
 const total = urls.length;
-const skip = cfg.skipLessons && cfg.skipLessons > 0 ? cfg.skipLessons : 0;
+const skip = cfg.startFromLesson > 1 ? cfg.startFromLesson - 1 : 0;
 if (skip > 0) {
   urls = urls.slice(skip);
   if (urls.length === 0) {
-    console.log(`skipLessons=${skip} ma le lezioni sono ${total}: niente da aprire.`);
+    console.log(`Parti dalla lezione ${cfg.startFromLesson} ma le lezioni sono ${total}: niente da aprire.`);
+    console.log('Cambia startFromLesson dal menu Configurazione.');
+    await context.close();
     process.exit(0);
   }
 }
