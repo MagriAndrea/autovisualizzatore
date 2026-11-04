@@ -1,16 +1,24 @@
 [
   {
     "nome": "startFromLesson",
-    "valore": 1,
+    "valore": 25,
     "min": 1,
     "descrizione": "Numero della lezione da cui partire (1 = dalla prima). Le lezioni precedenti vengono saltate.",
     "note": "Utile per riprendere da dove eri rimasto: se hai già visto fino alla 34, metti 35."
   },
   {
     "nome": "maxLessons",
-    "valore": 8,
+    "valore": 6,
     "min": 0,
     "descrizione": "Numero massimo di lezioni da guardare contemporaneamente (0 = tutte quelle rimanenti).",
     "note": "Consiglio massimo 6-7 lezioni: oltre, i video cominciano a bloccarsi."
+  },
+  {
+    "nome": "invisibile",
+    "valore": 1,
+    "min": 0,
+    "max": 1,
+    "descrizione": "1 = dopo il login la finestra di Chrome si chiude e le lezioni girano in un Chrome invisibile. 0 = le lezioni restano in una finestra visibile.",
+    "note": "Se in modalità invisibile i video non partono, metti 0."
   }
 ]

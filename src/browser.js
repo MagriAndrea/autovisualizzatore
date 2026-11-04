@@ -42,19 +42,34 @@ function visibilitySpoof() {
   }
 }
 
+const ARGS = [
+  '--disable-background-timer-throttling',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding',
+  '--autoplay-policy=no-user-gesture-required',
+];
+
+// Chrome visibile col profilo salvato (./.chrome-profile): qui fai il login.
 export async function launch(cfg) {
-  const args = [
-    '--disable-background-timer-throttling',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
-    '--autoplay-policy=no-user-gesture-required',
-  ];
   const context = await chromium.launchPersistentContext(cfg.userDataDir, {
     channel: cfg.channel || 'chrome',
-    headless: !!cfg.headless,
+    headless: false,
     viewport: null,
-    args,
+    args: ARGS,
   });
+  await context.addInitScript(visibilitySpoof);
+  return context;
+}
+
+// Chrome senza finestra che riusa i cookie della sessione fatta in quello visibile.
+// È lo stesso Chrome: carica il player e scarica i video come prima, solo non li disegna a schermo.
+export async function launchInvisible(cfg, { storageState, userAgent }) {
+  const browser = await chromium.launch({
+    channel: cfg.channel || 'chrome',
+    headless: true,
+    args: ARGS,
+  });
+  const context = await browser.newContext({ storageState, userAgent, viewport: { width: 1280, height: 720 } });
   await context.addInitScript(visibilitySpoof);
   return context;
 }

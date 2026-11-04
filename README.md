@@ -17,24 +17,29 @@ funziona). Login SSO fatto a mano una volta: la sessione resta nel profilo `./.c
 npm install                 # installa Playwright (solo la prima volta)
 npm start                   # apre il menu
 ```
-Il menu mostra cosa verrà fatto (es. *"Autovisualizza 8 lezioni partendo dalla lezione 35"*) e chiede un numero:
+Il menu mostra cosa verrà fatto (es. *"Autovisualizza 6 lezioni partendo dalla lezione 35, in Chrome invisibile."*) e chiede un numero:
 
 - **1 — Inizia**: apre Chrome, fai il login, vai alla videoteca dell'esame e incolla l'URL
   (o lascia vuoto per usare la scheda aperta). Le lezioni partono tutte insieme.
+  Con `invisibile = 1` la finestra poi si chiude e le lezioni girano in un Chrome senza finestra:
+  vedi solo l'avanzamento nel terminale.
 - **2 — Configurazione**: modifica le impostazioni qui sotto, scegliendole per numero.
 - **0 — Esci**.
 
 ## impostazioni.json (modificabili dal menu)
-Ogni voce ha `nome`, `valore`, `min`, `descrizione`, `note`.
+Ogni voce ha `nome`, `valore`, `min` (e opzionale `max`), `descrizione`, `note`.
 - `startFromLesson` — lezione da cui partire (1 = dalla prima).
 - `maxLessons` — quante lezioni guardare insieme (0 = tutte le rimanenti). Consigliato max 6-7.
+- `invisibile` — `1` = dopo il login le lezioni girano in Chrome invisibile; `0` = in una finestra visibile.
+  Chrome invisibile scarica e riproduce i video come quello visibile. Se i video non partono (es. DRM), metti `0`.
 
 ## config.json (parametri tecnici)
 - `lessonsListUrl` — pagina che elenca le lezioni di un esame.
 - `linkSelector` — selettore CSS dei link alle singole lezioni.
 - `concurrency` — `0` = tutte insieme; altrimenti max tab contemporanee.
 - `autoClose` — `false` lascia le tab aperte a fine video (consigliato, così partono gli ultimi heartbeat).
-- `maxMinutesPerVideo` — cap di sicurezza per lezione.
+- `maxMinutesPerVideo` — cap di sicurezza, contato da quando si apre ogni lezione. Una lezione che lo supera
+  viene segnata come **SCADUTA** (con la percentuale reale) e va rifatta.
 
 ## Note
 - I video vanno in **tempo reale**: aprendole tutte insieme finisci in ~durata del video più lungo,

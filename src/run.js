@@ -1,6 +1,6 @@
 // Runner principale: apre l'elenco lezioni, raccoglie gli URL, li apre TUTTI in parallelo
 // (tab spoofate come "visibili") e monitora l'avanzamento di ogni video fino al 100%.
-import { loadConfig, launch, readVideo, nudgePlay, sleep } from './browser.js';
+import { loadConfig, launch, launchInvisible, readVideo, nudgePlay, sleep } from './browser.js';
 import { menu, ask } from './menu.js';
 
 function fmt(sec) {
@@ -16,7 +16,8 @@ if (!cfg.linkSelector) {
   process.exit(1);
 }
 
-const context = await launch(cfg);
+const invisibile = cfg.invisibile === 1;
+let context = await launch(cfg); // finestra visibile: serve per il login
 const lister = context.pages()[0] || (await context.newPage());
 
 function filterDedupe(urls) {
@@ -105,6 +106,16 @@ if (skip > 0 || urls.length < total) {
   console.log(`(apro le lezioni ${skip + 1}–${skip + urls.length} di ${total})`);
 }
 
+if (invisibile) {
+  // Porta la sessione (cookie del login) in un Chrome senza finestra e chiudi quella visibile.
+  // Stesso user agent della finestra, così per il sito non cambia niente.
+  const userAgent = await lister.evaluate(() => navigator.userAgent);
+  const storageState = await context.storageState();
+  await context.close();
+  context = await launchInvisible(cfg, { storageState, userAgent });
+  console.log('Finestra chiusa: le lezioni girano in Chrome invisibile.');
+}
+
 const limit = cfg.concurrency && cfg.concurrency > 0 ? cfg.concurrency : urls.length;
 console.log(`\nTrovate ${urls.length} lezioni. Apro fino a ${limit} in parallelo (tempo reale).\n`);
 
@@ -112,6 +123,7 @@ const tasks = urls.map((url, i) => ({ i: skip + i + 1, url, page: null, done: fa
 
 // Apre una lezione in una nuova tab e avvia il play.
 async function open(task) {
+  task.openedAt = Date.now(); // il limite maxMinutesPerVideo parte da qui, per ogni lezione
   task.page = await context.newPage();
   try {
     await task.page.goto(task.url, { waitUntil: 'domcontentloaded' });
@@ -133,36 +145,50 @@ async function fillQueue() {
 }
 
 const startedAt = Date.now();
+const maxMinutes = cfg.maxMinutesPerVideo || 70;
+
+// Una riga della tabella: [barra, percentuale, dettaglio].
+function riga(t) {
+  if (t.done && !t.timedout) return ['█████████', '100%', 'OK'];
+  if (!t.page) return ['         ', '   ', 'in coda'];
+  const s = t.status;
+  let bar = '         ', pct = '   ', extra;
+  if (s && s.duration) {
+    const r = Math.min(1, s.currentTime / s.duration);
+    const n = Math.round(r * 9);
+    bar = '█'.repeat(n) + '░'.repeat(9 - n);
+    pct = `${String(Math.round(r * 100)).padStart(3)}%`;
+    extra = `${fmt(s.currentTime)}/${fmt(s.duration)}${s.paused ? '  ⏸' : ''}`;
+  } else if (s) {
+    extra = `play… ${fmt(s.currentTime)}${s.paused ? '  ⏸' : ''}`;
+  } else {
+    extra = 'carico player…';
+  }
+  // Lezione fermata dal limite di sicurezza: mostra dov'era arrivata, non un falso 100%.
+  if (t.timedout) extra += `  SCADUTA (oltre ${maxMinutes} min)`;
+  return [bar, pct, extra];
+}
+
 function render() {
   process.stdout.write('\x1b[2J\x1b[H'); // pulisci schermo
   const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-  console.log(`Autovisualizzatore — ${tasks.filter((t) => t.done).length}/${tasks.length} complete — trascorso ${fmt(elapsed)}\n`);
+  const ok = tasks.filter((t) => t.done && !t.timedout).length;
+  const scadute = tasks.filter((t) => t.timedout).length;
+  console.log(`Autovisualizzatore — ${ok}/${tasks.length} complete${scadute ? ` — ${scadute} scadute` : ''} — trascorso ${fmt(elapsed)}\n`);
   for (const t of tasks) {
-    let bar = '         ', pct = '   ', extra = '';
-    const s = t.status;
-    if (t.done) {
-      bar = '█████████'; pct = '100%'; extra = 'OK';
-    } else if (!t.page) {
-      extra = 'in coda';
-    } else if (s && s.duration) {
-      const r = Math.min(1, s.currentTime / s.duration);
-      const n = Math.round(r * 9);
-      bar = '█'.repeat(n) + '░'.repeat(9 - n);
-      pct = `${String(Math.round(r * 100)).padStart(3)}%`;
-      extra = `${fmt(s.currentTime)}/${fmt(s.duration)}${s.paused ? '  ⏸' : ''}`;
-    } else if (s) {
-      extra = `play… ${fmt(s.currentTime)}${s.paused ? '  ⏸' : ''}`;
-    } else {
-      extra = 'carico player…';
-    }
+    const [bar, pct, extra] = riga(t);
     console.log(`  ${String(t.i).padStart(2)}. [${bar}] ${pct}  ${extra}`);
+  }
+  if (invisibile && elapsed > 90 && !tasks.some((t) => t.status && t.status.currentTime > 0)) {
+    console.log('\n⚠ Nessun video sta andando avanti. Forse il player non funziona in Chrome invisibile:');
+    console.log('  ferma con Ctrl+C, metti invisibile = 0 dal menu Configurazione e riprova.');
   }
   console.log('\nCtrl+C per fermare. Le tab restano aperte per inviare gli ultimi heartbeat.');
 }
 
 const pollMs = (cfg.pollSeconds || 5) * 1000;
 const graceLeft = cfg.completeAtSecondsLeft ?? 3;
-const maxMs = (cfg.maxMinutesPerVideo || 70) * 60 * 1000;
+const maxMs = maxMinutes * 60 * 1000;
 
 while (tasks.some((t) => !t.done)) {
   await fillQueue();
@@ -179,9 +205,9 @@ while (tasks.some((t) => !t.done)) {
       }
       if (s.paused) await nudgePlay(t.page); // ri-spinge il play se qualcosa l'ha messo in pausa
     }
-    if (t.page && Date.now() - startedAt > maxMs && !t.done) {
+    if (Date.now() - t.openedAt > maxMs) {
       // Cap di sicurezza: non restare bloccati all'infinito su una singola lezione.
-      t.done = true; t.status = { ...(s || {}), timedout: true };
+      t.done = true; t.timedout = true;
     }
   }
   render();
@@ -189,9 +215,16 @@ while (tasks.some((t) => !t.done)) {
 }
 
 render();
-console.log('\nTutte le lezioni hanno raggiunto la fine.');
-console.log('Controlla le percentuali nella tua homepage studente prima di chiudere il browser.');
+const scadute = tasks.filter((t) => t.timedout);
+if (scadute.length === 0) {
+  console.log('\nTutte le lezioni hanno raggiunto la fine.');
+} else {
+  console.log(`\nATTENZIONE: ${scadute.length} lezioni NON sono arrivate in fondo (n. ${scadute.map((t) => t.i).join(', ')}).`);
+  console.log(`Hanno superato il limite di ${maxMinutes} minuti (maxMinutesPerVideo): rifalle.`);
+}
+console.log('Controlla le percentuali nella tua pagina studente.');
 if (!cfg.autoClose) {
-  await ask('INVIO per chiudere il browser… ');
+  await ask('INVIO per chiudere Chrome… ');
 }
 await context.close();
+await context.browser()?.close(); // solo per Chrome invisibile (con il profilo è già chiuso)

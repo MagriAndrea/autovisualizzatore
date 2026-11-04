@@ -7,9 +7,10 @@ export function ask(question) {
   return new Promise((res) => rl.question(question, (a) => { rl.close(); res(a); }));
 }
 
-function riepilogo({ startFromLesson, maxLessons }) {
+function riepilogo({ startFromLesson, maxLessons, invisibile }) {
   const quante = maxLessons > 0 ? `${maxLessons} lezioni` : 'tutte le lezioni';
-  return `Autovisualizza ${quante} partendo dalla lezione ${startFromLesson}.`;
+  const dove = invisibile === 1 ? 'in Chrome invisibile' : 'in una finestra di Chrome';
+  return `Autovisualizza ${quante} partendo dalla lezione ${startFromLesson}, ${dove}.`;
 }
 
 async function configurazione() {
@@ -33,8 +34,10 @@ async function configurazione() {
     if (input === '') continue;
     const n = Number(input);
     const min = voce.min ?? 0;
-    if (!Number.isInteger(n) || n < min) {
-      console.log(`  → Serve un numero intero maggiore o uguale a ${min}.`);
+    const max = voce.max ?? Infinity;
+    if (!Number.isInteger(n) || n < min || n > max) {
+      const range = Number.isFinite(max) ? `tra ${min} e ${max}` : `maggiore o uguale a ${min}`;
+      console.log(`  → Serve un numero intero ${range}.`);
       continue;
     }
     voce.valore = n;
