@@ -15,7 +15,7 @@ export function saveImpostazioni(voci) {
   fs.writeFileSync(FILE, JSON.stringify(voci, null, 2) + '\n');
 }
 
-// { startFromLesson: 35, maxLessons: 8, ... }
+// { videoInsieme: 0, invisibile: 1, ... }
 export function valori(voci = loadImpostazioni()) {
   return Object.fromEntries(voci.map((v) => [v.nome, v.valore]));
 }

@@ -1,3 +1,5 @@
 node_modules/
 .chrome-profile/
 discovered/
+progresso.json
+progresso.json.tmp

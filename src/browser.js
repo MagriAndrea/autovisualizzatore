@@ -1,4 +1,4 @@
-// Funzioni condivise: avvio del browser, spoof della visibilità, lettura/controllo dei video.
+// Funzioni condivise: avvio del browser, spoof della visibilità, lettura e controllo dei video.
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,6 +42,21 @@ function visibilitySpoof() {
   }
 }
 
+// Altro script iniettato: passa al programma le notifiche del sito (es. "tempo di fruizione finito")
+// scrivendole in console con un prefisso riconoscibile. La notifica vera parte comunque.
+function catturaNotifiche() {
+  try {
+    const Vera = window.Notification;
+    const Spia = function (titolo, opzioni) {
+      console.log('[autovis-notifica] ' + titolo + ' ' + ((opzioni && opzioni.body) || ''));
+      try { return new Vera(titolo, opzioni); } catch (_) { return {}; }
+    };
+    Spia.permission = 'granted';
+    Spia.requestPermission = () => Promise.resolve('granted');
+    window.Notification = Spia;
+  } catch (_) {}
+}
+
 const ARGS = [
   '--disable-background-timer-throttling',
   '--disable-backgrounding-occluded-windows',
@@ -58,6 +73,7 @@ export async function launch(cfg) {
     args: ARGS,
   });
   await context.addInitScript(visibilitySpoof);
+  await context.addInitScript(catturaNotifiche);
   return context;
 }
 
@@ -71,28 +87,41 @@ export async function launchInvisible(cfg, { storageState, userAgent }) {
   });
   const context = await browser.newContext({ storageState, userAgent, viewport: { width: 1280, height: 720 } });
   await context.addInitScript(visibilitySpoof);
+  await context.addInitScript(catturaNotifiche);
   return context;
 }
 
-// Cerca un <video> in tutti i frame della pagina e ne legge lo stato.
-export async function readVideo(page) {
+// Cerca un <video> in tutti i frame della pagina e ne legge lo stato, compresa la riserva
+// (secondi già scaricati davanti alla posizione). Restituisce anche il frame, per i salti.
+export async function leggiVideo(page) {
   for (const frame of page.frames()) {
     try {
       const s = await frame.evaluate(() => {
         const v = document.querySelector('video');
         if (!v) return null;
+        let fine = v.currentTime;
+        for (let i = 0; i < v.buffered.length; i++) {
+          if (v.buffered.start(i) <= v.currentTime + 0.5) fine = Math.max(fine, v.buffered.end(i));
+        }
         return {
-          currentTime: v.currentTime || 0,
-          duration: Number.isFinite(v.duration) ? v.duration : null,
+          pos: v.currentTime || 0,
+          dur: Number.isFinite(v.duration) && v.duration > 0 ? v.duration : null,
           paused: v.paused,
           ended: v.ended,
-          readyState: v.readyState,
+          riserva: fine - v.currentTime,
+          // Scaricato fino alla fine: da qui la riserva cala da sola, non è la rete.
+          finoAllaFine: Number.isFinite(v.duration) && fine >= v.duration - 1,
         };
       });
-      if (s) return s;
+      if (s) return { ...s, frame };
     } catch (_) { /* frame staccato / cross-origin non accessibile */ }
   }
   return null;
+}
+
+// Sposta il video al secondo indicato (il player Uninettuno lo permette).
+export async function salta(frame, sec) {
+  await frame.evaluate((t) => { document.querySelector('video').currentTime = t; }, sec);
 }
 
 // Spinge il play (muto) su ogni <video> trovato, nel caso l'autoplay non sia partito.
