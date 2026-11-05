@@ -1,197 +1,131 @@
-// Runner principale: apre l'elenco lezioni, raccoglie gli URL, li apre TUTTI in parallelo
-// (tab spoofate come "visibili") e monitora l'avanzamento di ogni video fino al 100%.
-import { loadConfig, launch, readVideo, nudgePlay, sleep } from './browser.js';
-import { menu, ask } from './menu.js';
+// Avvio: menu, poi giri "login → lezioni fino a ~115 minuti → nuovo login" finché le lezioni sono finite.
+// L'avanzamento di ogni lezione è in progresso.json: si riprende sempre da dove si era rimasti.
+import { loadConfig, launch, launchInvisible, sleep } from './browser.js';
+import { menu } from './menu.js';
+import { carica, salva, aggiornaEsame, esameCorrente, stima, durata, lezioni } from './progresso.js';
+import { sessione } from './sessione.js';
+import { loggato, isVideoteca, courseid, logoffUrl, lezioniNellaPagina } from './sito.js';
+import { tieniSveglio, notifica } from './mac.js';
 
-function fmt(sec) {
-  if (sec == null || !Number.isFinite(sec)) return '--:--';
-  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+const progresso = carica();
+const scelta = await menu(progresso, loadConfig());
+const cfg = loadConfig(); // ricaricata: dal menu potresti aver cambiato le impostazioni
+let nuovoEsame = scelta === 'nuovo' || !esameCorrente(progresso);
+
+if (!nuovoEsame && stima(esameCorrente(progresso)).rimaste === 0) {
+  console.log('\nLe lezioni di questo esame sono già tutte complete. Scegli "Nuovo esame" per un altro.');
+  process.exit(0);
 }
 
-await menu();
-const cfg = loadConfig();
-if (!cfg.linkSelector) {
-  console.error('\nManca linkSelector in config.json (il selettore CSS dei link-lezione).');
-  process.exit(1);
-}
+// Ctrl+C: salva subito. Playwright poi chiude Chrome ed esce; se Chrome non è aperto, esco io.
+process.on('SIGINT', () => {
+  try { salva(progresso); } catch (_) {}
+  console.log('\nFermato. Avanzamento salvato.');
+  setTimeout(() => process.exit(130), 3000);
+});
+tieniSveglio();
 
-const context = await launch(cfg);
-const lister = context.pages()[0] || (await context.newPage());
-
-function filterDedupe(urls) {
-  // Tiene solo gli href con tutti i linkIncludes e nessun linkExcludes.
-  const inc = cfg.linkIncludes || [];
-  const exc = cfg.linkExcludes || [];
-  urls = urls.filter((u) => inc.every((s) => u.includes(s)) && !exc.some((s) => u.includes(s)));
-  // Dedup: una sola lezione per valore del parametro indicato (es. matdidid), altrimenti per URL.
-  const seen = new Set();
-  const out = [];
-  for (const u of urls) {
-    let key = u;
-    if (cfg.dedupeByParam) {
-      try { key = new URL(u).searchParams.get(cfg.dedupeByParam) ?? u; } catch (_) {}
-    }
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(u);
-  }
-  return out;
-}
-
-// Raccoglie gli href dalla pagina indicata, col selettore configurato.
-async function collectOn(page) {
-  return page
-    .$$eval(cfg.linkSelector || 'a[href]', (els) => els.map((e) => e.href).filter(Boolean))
-    .catch(() => []);
-}
-
-const isLessonUrl = (u) => /cyberspaziomaterialedidattico\.aspx/i.test(u);
-
-// Scrape della videoteca: vai sulla pagina-elenco e raccogli i link alle lezioni.
-async function scrapeVideoteca(url) {
-  try { await lister.goto(url, { waitUntil: 'domcontentloaded' }); } catch (_) {}
-  // Aspetta che i link compaiano (la pagina ASP.NET può popolarli dopo il load).
-  await lister.waitForSelector(cfg.linkSelector, { timeout: 15000 }).catch(() => {});
-  return collectOn(lister);
-}
-
-// Input vuoto: raccoglie dalle schede già aperte (dove hai navigato tu alla videoteca).
-async function scrapeOpenTabs() {
-  const raw = [];
-  for (const p of context.pages()) raw.push(...(await collectOn(p)));
-  return raw;
-}
-
-// 1) Apri la pagina di login. 2) L'utente accede e va sulla videoteca.
-try { await lister.goto(cfg.startUrl, { waitUntil: 'domcontentloaded' }); } catch (_) {}
-
-console.log('\n──────── Avvio ────────');
-console.log('1) Fai il LOGIN nella finestra di Chrome che si è aperta.');
-console.log('2) Vai alla VIDEOTECA dell\'esame che vuoi guardare.');
-console.log('3) Incolla qui l\'URL della videoteca e premi INVIO');
-console.log('   (oppure lascia VUOTO per usare la scheda già aperta sulla videoteca).\n');
-
-let urls = [];
-while (urls.length === 0) {
-  const input = (await ask('URL videoteca (vuoto = scheda aperta)> ')).trim();
-  if (isLessonUrl(input)) {
-    console.log('  → Questo è l\'URL di una singola lezione. Serve l\'URL della VIDEOTECA (l\'elenco). Riprova.\n');
-    continue;
-  }
-  const raw = input ? await scrapeVideoteca(input) : await scrapeOpenTabs();
-  urls = filterDedupe(raw);
-  if (urls.length === 0) {
-    console.log('  → Nessuna lezione trovata. Completa il login / apri la videoteca giusta, poi riprova (INVIO).\n');
+// Ripete fn() ogni 2 secondi finché restituisce qualcosa.
+async function attendi(fn) {
+  for (;;) {
+    const r = await fn();
+    if (r) return r;
+    await sleep(2000);
   }
 }
 
-// startFromLesson = prima lezione da aprire (1-based); maxLessons limita quante aprirne (0 = tutte).
-const total = urls.length;
-const skip = cfg.startFromLesson > 1 ? cfg.startFromLesson - 1 : 0;
-if (skip > 0) {
-  urls = urls.slice(skip);
-  if (urls.length === 0) {
-    console.log(`Parti dalla lezione ${cfg.startFromLesson} ma le lezioni sono ${total}: niente da aprire.`);
-    console.log('Cambia startFromLesson dal menu Configurazione.');
-    await context.close();
-    process.exit(0);
-  }
-}
-if (cfg.maxLessons && cfg.maxLessons > 0 && urls.length > cfg.maxLessons) {
-  urls = urls.slice(0, cfg.maxLessons);
-}
-if (skip > 0 || urls.length < total) {
-  console.log(`(apro le lezioni ${skip + 1}–${skip + urls.length} di ${total})`);
-}
+// Apre Chrome visibile, fa logout (così i 120 minuti partono da un login nuovo) e aspetta il tuo login.
+async function login(giro) {
+  process.stdout.write('\x1b[2J\x1b[H');
+  console.log(`──────── Login${giro > 1 ? ` n. ${giro}` : ''} ────────\n`);
+  console.log('Apro Chrome e la pagina di Uninettuno…');
+  const context = await launch(cfg);
+  const page = context.pages()[0] || (await context.newPage());
+  try { await page.goto(logoffUrl(cfg), { waitUntil: 'domcontentloaded' }); } catch (_) {}
+  try { await page.goto(cfg.startUrl, { waitUntil: 'domcontentloaded' }); } catch (_) {}
 
-const limit = cfg.concurrency && cfg.concurrency > 0 ? cfg.concurrency : urls.length;
-console.log(`\nTrovate ${urls.length} lezioni. Apro fino a ${limit} in parallelo (tempo reale).\n`);
+  console.log('\nFai il LOGIN nella finestra di Chrome che si è aperta.');
+  if (nuovoEsame) console.log('Poi apri la VIDEOTECA dell\'esame da guardare: il programma la riconosce da solo.');
+  console.log('');
 
-const tasks = urls.map((url, i) => ({ i: skip + i + 1, url, page: null, done: false, status: null }));
+  const loginAt = await attendi(async () => {
+    for (const p of context.pages()) if (await loggato(p)) return Date.now();
+    return null;
+  });
+  console.log('Login riconosciuto.');
 
-// Apre una lezione in una nuova tab e avvia il play.
-async function open(task) {
-  task.page = await context.newPage();
-  try {
-    await task.page.goto(task.url, { waitUntil: 'domcontentloaded' });
-  } catch (_) {}
-  await nudgePlay(task.page);
-}
-
-// Apertura scaglionata per non sovraccaricare la rete tutto in una volta.
-let opened = 0;
-async function fillQueue() {
-  for (const t of tasks) {
-    if (t.page || t.done) continue;
-    const active = tasks.filter((x) => x.page && !x.done).length;
-    if (active >= limit) break;
-    await open(t);
-    opened++;
-    await sleep(cfg.staggerMs || 1000);
-  }
-}
-
-const startedAt = Date.now();
-function render() {
-  process.stdout.write('\x1b[2J\x1b[H'); // pulisci schermo
-  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-  console.log(`Autovisualizzatore — ${tasks.filter((t) => t.done).length}/${tasks.length} complete — trascorso ${fmt(elapsed)}\n`);
-  for (const t of tasks) {
-    let bar = '         ', pct = '   ', extra = '';
-    const s = t.status;
-    if (t.done) {
-      bar = '█████████'; pct = '100%'; extra = 'OK';
-    } else if (!t.page) {
-      extra = 'in coda';
-    } else if (s && s.duration) {
-      const r = Math.min(1, s.currentTime / s.duration);
-      const n = Math.round(r * 9);
-      bar = '█'.repeat(n) + '░'.repeat(9 - n);
-      pct = `${String(Math.round(r * 100)).padStart(3)}%`;
-      extra = `${fmt(s.currentTime)}/${fmt(s.duration)}${s.paused ? '  ⏸' : ''}`;
-    } else if (s) {
-      extra = `play… ${fmt(s.currentTime)}${s.paused ? '  ⏸' : ''}`;
-    } else {
-      extra = 'carico player…';
-    }
-    console.log(`  ${String(t.i).padStart(2)}. [${bar}] ${pct}  ${extra}`);
-  }
-  console.log('\nCtrl+C per fermare. Le tab restano aperte per inviare gli ultimi heartbeat.');
-}
-
-const pollMs = (cfg.pollSeconds || 5) * 1000;
-const graceLeft = cfg.completeAtSecondsLeft ?? 3;
-const maxMs = (cfg.maxMinutesPerVideo || 70) * 60 * 1000;
-
-while (tasks.some((t) => !t.done)) {
-  await fillQueue();
-  for (const t of tasks) {
-    if (!t.page || t.done) continue;
-    const s = await readVideo(t.page);
-    t.status = s;
-    if (s) {
-      const finishedByTime = s.duration && s.currentTime >= s.duration - graceLeft;
-      if (s.ended || finishedByTime) {
-        t.done = true;
-        if (cfg.autoClose) { try { await t.page.close(); } catch (_) {} }
-        continue;
+  let id, esame;
+  if (nuovoEsame) {
+    console.log('Aspetto che tu apra la videoteca dell\'esame…');
+    const v = await attendi(async () => {
+      for (const p of context.pages()) {
+        if (!isVideoteca(p.url())) continue;
+        const urls = await lezioniNellaPagina(p, cfg);
+        if (urls.length) return { url: p.url(), urls };
       }
-      if (s.paused) await nudgePlay(t.page); // ri-spinge il play se qualcosa l'ha messo in pausa
-    }
-    if (t.page && Date.now() - startedAt > maxMs && !t.done) {
-      // Cap di sicurezza: non restare bloccati all'infinito su una singola lezione.
-      t.done = true; t.status = { ...(s || {}), timedout: true };
-    }
+      return null;
+    });
+    id = courseid(v.url);
+    esame = aggiornaEsame(progresso, id, v.url, v.urls, cfg.dedupeByParam);
+    nuovoEsame = false;
+  } else {
+    // Esame già noto: vado io alla videoteca e aggiorno l'elenco (se compaiono lezioni nuove).
+    id = progresso.esameCorrente;
+    const salvato = progresso.esami[id];
+    console.log('Apro la videoteca dell\'esame e controllo l\'elenco delle lezioni…');
+    try { await page.goto(salvato.videoteca, { waitUntil: 'domcontentloaded' }); } catch (_) {}
+    await page.waitForSelector(cfg.linkSelector, { timeout: 15000 }).catch(() => {});
+    const urls = await lezioniNellaPagina(page, cfg);
+    esame = urls.length ? aggiornaEsame(progresso, id, salvato.videoteca, urls, cfg.dedupeByParam) : salvato;
   }
-  render();
-  await sleep(pollMs);
+  salva(progresso);
+  console.log(`Esame ${id}: ${esame.lezioni.length} lezioni, ${stima(esame).rimaste} da finire.`);
+  return { context, page, id, esame, loginAt };
 }
 
-render();
-console.log('\nTutte le lezioni hanno raggiunto la fine.');
-console.log('Controlla le percentuali nella tua homepage studente prima di chiudere il browser.');
-if (!cfg.autoClose) {
-  await ask('INVIO per chiudere il browser… ');
+let insieme; // in automatico, il numero di video raggiunto nella sessione precedente
+for (let giro = 1; ; giro++) {
+  const { context, page, id, esame, loginAt } = await login(giro);
+  let ctx = context;
+  if (cfg.invisibile === 1) {
+    // Porta i cookie del login in un Chrome senza finestra, con lo stesso user agent.
+    console.log('Chiudo la finestra di Chrome e passo a Chrome invisibile…');
+    const userAgent = await page.evaluate(() => navigator.userAgent).catch(() => undefined);
+    const storageState = await context.storageState();
+    await context.close();
+    ctx = await launchInvisible(cfg, { storageState, userAgent });
+  }
+
+  const esito = await sessione({ cfg, context: ctx, progresso, esame, nomeEsame: id, loginAt, iniziale: insieme });
+  insieme = esito.target;
+  salva(progresso);
+  // Logout anche qui: la sessione vecchia si chiude subito, invece di restare aperta sul server.
+  const uscita = await ctx.newPage().catch(() => null);
+  if (uscita) await uscita.goto(logoffUrl(cfg), { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+  await ctx.close().catch(() => {});
+  await ctx.browser()?.close().catch(() => {}); // solo per Chrome invisibile
+
+  const st = stima(esame);
+  if (st.rimaste === 0) {
+    notifica(cfg, 'Tutte le lezioni sono complete!');
+    console.log(`\nTutte le ${st.totali} lezioni dell'esame ${id} sono complete.`);
+    console.log('Controlla le percentuali nella tua pagina studente.');
+    break;
+  }
+  if (esito.motivo === 'finite') {
+    const n = esame.lezioni.filter((l) => !l.completata).map((l) => l.n);
+    notifica(cfg, 'Alcune lezioni non partono: controllale a mano');
+    console.log(`\nLe lezioni n. ${n.join(', ')} si sono bloccate 3 volte e le ho lasciate stare.`);
+    console.log('Aprile a mano per controllare. Al prossimo avvio verranno riprovate.');
+    break;
+  }
+  const perche = esito.motivo === 'avviso'
+    ? `il sito ha avvisato: "${esito.avviso}"`
+    : `sono passati ${cfg.sessioneMinuti} minuti dal login`;
+  const manca = st.rimaste === 1 ? 'Manca' : 'Mancano';
+  notifica(cfg, `Rifai il login per continuare: ${manca.toLowerCase()} ${lezioni(st.rimaste)}`);
+  console.log(`\nSessione finita: ${perche}. Avanzamento salvato.`);
+  console.log(`${manca} ${lezioni(st.rimaste)} (circa ${durata(st.secondi)} di video). Riapro Chrome per il login…`);
+  await sleep(3000);
 }
-await context.close();
+process.exit(0);
