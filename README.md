@@ -1,23 +1,40 @@
 # Autovisualizzatore
 
-Fa scorrere le videolezioni Uninettuno di un esame fino in fondo, in tempo reale, così la
-percentuale di visualizzazione arriva al 100% senza guardarle a mano. Tu fai solo il login,
-una volta ogni due ore circa: al resto pensa il programma.
+Questo programma guarda al posto tuo le videolezioni Uninettuno di un esame, così la percentuale
+di visualizzazione arriva al 100%. Non serve tenere aperta nessuna scheda di Chrome: le lezioni
+vanno avanti in un Chrome invisibile, e il programma fa credere al sito che ci sia qualcuno
+davanti alla lezione.
+
+## Come funziona, in breve
+- Per iniziare scegli **Avvia**, fai il login ed entra una volta nella pagina delle videolezioni
+  dell'esame. Dalla volta dopo il programma se la ricorda.
+- Le lezioni partono dalla prima che ti manca e vanno avanti da sole fino all'ultima. Non devi
+  fare né controllare niente.
+- Vanno alla velocità normale: una lezione di 45 minuti dura 45 minuti. Per fare prima il
+  programma ne guarda più di una insieme, e sceglie da solo quante in base alla tua connessione.
+- Circa ogni 2 ore devi rifare il login: Uninettuno conta al massimo 120 minuti per ogni accesso.
+  Ti arriva una notifica e si riapre Chrome.
+- Se fermi il programma prima della fine non perdi niente: la volta dopo ogni lezione riparte dal
+  punto in cui si era fermata (qualche minuto prima, per sicurezza).
+- Per fermarlo premi Ctrl+C. Mentre lavora lascia il Mac acceso, con il coperchio aperto e
+  possibilmente in carica. Lo schermo può spegnersi.
 
 ## Uso
 ```bash
 npm install                 # installa Playwright (solo la prima volta)
 npm start                   # apre il menu
 ```
-Il menu dice quanto manca (es. *"16 lezioni da finire su 40, circa 11 h di video… 2 login"*):
+Il menu dice quanto manca e da quale lezione si parte (es. *"10 lezioni da finire su 40…
+Si parte dalla lezione 31"*):
 
 - **1 — Avvia** (o INVIO): si apre Chrome e fai il login. La prima volta apri anche la
   videoteca dell'esame: il programma la riconosce da solo e se la ricorda.
 - **2 — Nuovo esame**: dopo il login apri la videoteca di un altro esame.
 - **3 — Impostazioni**: facoltative (vedi sotto).
+- **4 — Come funziona**: la spiegazione qui sopra.
 - **0 — Esci**.
 
-## Come funziona
+## Come funziona, nel dettaglio
 - **Lista continua**: quando una lezione finisce, dopo 2 minuti di pausa ne parte un'altra al suo
   posto. Prima riprendono le lezioni lasciate a metà.
 - **Avanzamento salvato** in `progresso.json` ogni 5 secondi (posizione e durata di ogni lezione).
@@ -42,7 +59,10 @@ Stack: **Node.js + Playwright**, con il **Chrome di sistema**. Il profilo è in 
 - `videoInsieme` — quanti video insieme; `0` = automatico (consigliato).
 - `invisibile` — `1` = lezioni in Chrome invisibile; `0` = in una finestra visibile.
 
-Dal menu puoi anche **segnare come già viste** le lezioni fino a un certo numero.
+La terza voce delle impostazioni mostra la **lezione da cui si parte** (la prima non completa
+in `progresso.json`) e permette di cambiarla: le lezioni prima del numero scelto contano come
+già viste. Se scegli un numero più basso, chiede conferma e le lezioni da lì in poi tornano da
+guardare: da capo quelle finite, dal punto salvato quelle che erano a metà.
 
 ## config.json (parametri tecnici)
 - `sessioneMinuti` (115) — dopo quanti minuti dal login fermarsi e chiedere un nuovo login.

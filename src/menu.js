@@ -1,11 +1,50 @@
 // Menu iniziale: dice quanto manca e chiede cosa fare. Le impostazioni sono facoltative.
 import readline from 'node:readline';
 import { loadImpostazioni, saveImpostazioni, valori } from './impostazioni.js';
-import { esameCorrente, stima, durata, segnaViste, salva } from './progresso.js';
+import { esameCorrente, stima, durata, primaDaVedere, aMeta, partiDa, elenco, lezioni, salva } from './progresso.js';
 
 export function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((res) => rl.question(question, (a) => { rl.close(); res(a); }));
+}
+
+const COME_FUNZIONA = `
+──────── Come funziona ────────
+
+Questo programma guarda al posto tuo le videolezioni di un esame, così la
+percentuale di visualizzazione arriva al 100%. Non serve tenere aperta nessuna
+scheda di Chrome: le lezioni vanno avanti in un Chrome invisibile, e il
+programma fa credere al sito che ci sia qualcuno davanti alla lezione.
+
+  • Per iniziare scegli "Avvia", fai il login ed entra una volta nella pagina
+    delle videolezioni dell'esame. Dalla volta dopo il programma se la ricorda.
+
+  • Le lezioni partono dalla prima che ti manca e vanno avanti da sole fino
+    all'ultima. Non devi fare né controllare niente.
+
+  • Vanno alla velocità normale: una lezione di 45 minuti dura 45 minuti.
+    Per fare prima il programma ne guarda più di una insieme, e sceglie da
+    solo quante in base alla tua connessione.
+
+  • Circa ogni 2 ore devi rifare il login: Uninettuno conta al massimo
+    120 minuti per ogni accesso. Ti arriva una notifica e si riapre Chrome.
+
+  • Se fermi il programma prima della fine non perdi niente: la volta dopo
+    ogni lezione riparte dal punto in cui si era fermata (qualche minuto
+    prima, per sicurezza).
+
+  • Per fermarlo premi Ctrl+C. Mentre lavora lascia il Mac acceso, con il
+    coperchio aperto e possibilmente in carica. Lo schermo può spegnersi.
+`;
+
+// Da dove si parte. Le lezioni a metà vengono aperte per prime (vedi prossima() in sessione.js).
+function partenza(esame) {
+  const n = primaDaVedere(esame);
+  if (n == null) return 'Tutte le lezioni sono complete.';
+  const meta = aMeta(esame);
+  if (!meta.length) return `Si parte dalla lezione ${n}.`;
+  if (meta[0] === n) return `Si parte dalla lezione ${n} (${elenco(meta)} a metà: riprendono dal punto salvato).`;
+  return `Prima riprendono le lezioni a metà (${elenco(meta)}) dal punto salvato, poi si parte dalla ${n}.`;
 }
 
 function riepilogo(progresso, cfg) {
@@ -19,18 +58,39 @@ function riepilogo(progresso, cfg) {
   const tempo = st.secondi / n;
   const login = Math.max(1, Math.ceil(tempo / (cfg.sessioneMinuti * 60)));
   return [
-    `${nome}: ${st.rimaste} lezioni da finire su ${st.totali}, circa ${durata(st.secondi)} di video.`,
+    `${nome}: ${lezioni(st.rimaste)} da finire su ${st.totali}, circa ${durata(st.secondi)} di video.`,
+    partenza(esame),
     `Con ${n} video insieme${videoInsieme ? '' : ' (stima: il numero è automatico)'} servono circa ${durata(tempo)}: ${login} login.`,
   ].join('\n');
 }
 
 const mostraValore = (v) => (v.nome === 'videoInsieme' && v.valore === 0 ? '0 (automatico)' : String(v.valore));
 
+// Chiede da quale lezione partire e aggiorna progresso.json.
+async function sceltaPartenza(progresso, esame) {
+  const tot = esame.lezioni.length;
+  const attuale = primaDaVedere(esame);
+  const input = (await ask(`Da quale lezione vuoi partire? (1-${tot}, INVIO = lascia così) > `)).trim();
+  if (input === '') return;
+  const n = Number(input);
+  if (!Number.isInteger(n) || n < 1 || n > tot) { console.log('  → Numero non valido.'); return; }
+  if (n === attuale) { console.log(`  → Si parte già dalla lezione ${n}.`); return; }
+  if (n < (attuale ?? tot + 1)) {
+    const fino = (attuale ?? tot + 1) - 1;
+    const quali = n === fino ? `La lezione ${n} risulta già vista` : `Le lezioni ${n}–${fino} risultano già viste`;
+    const ok = (await ask(`  ${quali}: le rimetto da guardare? (s/N) > `)).trim();
+    if (!/^s/i.test(ok)) { console.log('  → Lasciato com\'era.'); return; }
+  }
+  partiDa(esame, n);
+  salva(progresso);
+  console.log(`  → Fatto. ${partenza(esame)}`);
+}
+
 async function impostazioni(progresso) {
   const voci = loadImpostazioni();
   for (;;) {
     const esame = esameCorrente(progresso);
-    const nViste = voci.length + 1;
+    const nPartenza = voci.length + 1;
     console.log('\n──────── Impostazioni (facoltative) ────────\n');
     voci.forEach((v, i) => {
       console.log(`  ${i + 1}) ${v.nome} = ${mostraValore(v)}`);
@@ -39,22 +99,19 @@ async function impostazioni(progresso) {
       console.log('');
     });
     if (esame) {
-      console.log(`  ${nViste}) Segna come già viste le lezioni fino alla n. …  (esame ${progresso.esameCorrente})`);
-      console.log('     Per le lezioni che hai già visto in altro modo.\n');
+      const n = primaDaVedere(esame);
+      console.log(`  ${nPartenza}) Lezione da cui partire = ${n ?? 'nessuna, sono tutte complete'}  (esame ${progresso.esameCorrente})`);
+      console.log(`     ${partenza(esame)}`);
+      console.log('     Cambiala se alcune lezioni le hai già viste in altro modo: quelle prima');
+      console.log('     del numero che scegli contano come già viste.\n');
     }
     console.log('  0) Indietro\n');
 
     const scelta = (await ask('Cosa vuoi cambiare? > ')).trim();
     if (scelta === '0' || scelta === '') return;
 
-    if (esame && Number(scelta) === nViste) {
-      const input = (await ask(`Fino a quale lezione? (1-${esame.lezioni.length}, INVIO = annulla) > `)).trim();
-      if (input === '') continue;
-      const n = Number(input);
-      if (!Number.isInteger(n) || n < 1 || n > esame.lezioni.length) { console.log('  → Numero non valido.'); continue; }
-      segnaViste(esame, n);
-      salva(progresso);
-      console.log(`  → Lezioni 1–${n} segnate come già viste.`);
+    if (esame && Number(scelta) === nPartenza) {
+      await sceltaPartenza(progresso, esame);
       continue;
     }
 
@@ -78,18 +135,22 @@ async function impostazioni(progresso) {
 
 // Restituisce 'avvia' o 'nuovo'; con "Esci" termina il processo.
 export async function menu(progresso, cfg) {
+  // Prima volta (nessun esame ancora): la spiegazione compare da sola.
+  if (!Object.keys(progresso.esami).length) console.log(COME_FUNZIONA);
   for (;;) {
     console.log('\n──────── Autovisualizzatore ────────\n');
     console.log(riepilogo(progresso, cfg));
     console.log('\n  1) Avvia          (oppure INVIO)');
     console.log('  2) Nuovo esame    (dopo il login apri un\'altra videoteca)');
     console.log('  3) Impostazioni');
+    console.log('  4) Come funziona');
     console.log('  0) Esci\n');
 
     const scelta = (await ask('Scegli un numero > ')).trim();
     if (scelta === '1' || scelta === '') return 'avvia';
     if (scelta === '2') return 'nuovo';
     if (scelta === '3') await impostazioni(progresso);
+    else if (scelta === '4') { console.log(COME_FUNZIONA); await ask('INVIO per tornare al menu > '); }
     else if (scelta === '0') process.exit(0);
     else console.log('  → Scelta non valida.');
   }

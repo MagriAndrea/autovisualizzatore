@@ -58,6 +58,41 @@ export function segnaViste(esame, finoA) {
   }
 }
 
+// Numero della prima lezione non completa: da lì parte il programma. null = tutte complete.
+export function primaDaVedere(esame) {
+  return esame.lezioni.find((l) => !l.completata)?.n ?? null;
+}
+
+// Lezioni lasciate a metà (riprendono dal punto salvato).
+export function aMeta(esame) {
+  return esame.lezioni.filter((l) => !l.completata && l.posizione > 0).map((l) => l.n);
+}
+
+// "Parti dalla lezione n": quelle prima di n diventano viste. Se n è prima del punto attuale,
+// le lezioni da n fino a quel punto tornano da guardare: da capo se erano finite davvero,
+// dal punto salvato se erano a metà (segnate viste dal menu).
+export function partiDa(esame, n) {
+  const attuale = primaDaVedere(esame) ?? esame.lezioni.length + 1;
+  for (const l of esame.lezioni) {
+    if (l.n < n) l.completata = true;
+    else if (l.n < attuale) {
+      const finita = l.durata && l.posizione >= l.durata - 30;
+      Object.assign(l, { completata: false, posizione: finita ? 0 : l.posizione });
+    }
+  }
+}
+
+// [31, 32, 33, 35] → "31–33, 35"
+export function elenco(numeri) {
+  const parti = [];
+  for (const n of numeri) {
+    const ultima = parti.at(-1);
+    if (ultima && n === ultima[1] + 1) ultima[1] = n;
+    else parti.push([n, n]);
+  }
+  return parti.map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`)).join(', ');
+}
+
 // Quanto manca: lezioni e secondi di video (durata ancora sconosciuta = media di quelle note, o 45 min).
 export function stima(esame) {
   const note = esame.lezioni.filter((l) => l.durata);
@@ -72,3 +107,6 @@ export function durata(sec) {
   if (m < 60) return `${m} min`;
   return `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;
 }
+
+// 1 → "1 lezione", 3 → "3 lezioni"
+export const lezioni = (n) => `${n} ${n === 1 ? 'lezione' : 'lezioni'}`;

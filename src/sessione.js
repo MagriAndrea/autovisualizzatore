@@ -1,7 +1,7 @@
 // Una sessione = un login, fino a cfg.sessioneMinuti. Lista continua: quando una lezione finisce,
 // dopo la pausa ne parte un'altra al suo posto. L'avanzamento si salva a ogni lettura (ogni 5 s).
 import { leggiVideo, nudgePlay, salta, sleep } from './browser.js';
-import { salva, stima, durata } from './progresso.js';
+import { salva, stima, durata, lezioni } from './progresso.js';
 
 const FINE_TEMPO = /fruizione|120\s*minuti/i;
 
@@ -23,7 +23,7 @@ export async function sessione({ cfg, context, progresso, esame, nomeEsame, logi
   const fineSessione = loginAt + cfg.sessioneMinuti * 60_000;
   const auto = !cfg.videoInsieme; // 0 = automatico
   let target = auto ? iniziale ?? cfg.autoIniziale : cfg.videoInsieme;
-  let giudizio = auto ? 'prima misura tra poco' : '';
+  let stato = ''; // cosa sta facendo in questo momento, se è un'attesa (es. "Apro la lezione 31…")
 
   const attive = []; // lezioni in riproduzione
   const inPausa = []; // lezioni finite: la scheda resta aperta durante la pausa
@@ -146,8 +146,7 @@ export async function sessione({ cfg, context, progresso, esame, nomeEsame, logi
       const minimo = target === 1;
       target = Math.max(1, target - 1);
       const lento = pct(Math.min(...lente.map((m) => m.vel)));
-      giudizio = `${lente.length} video sotto ${pct(cfg.sogliaLento)} (il più lento ${lento}): ${minimo ? 'già al minimo, 1' : `scendo a ${target}`}`;
-      evento(giudizio);
+      evento(`${lente.length} video sotto ${pct(cfg.sogliaLento)} (il più lento ${lento}): ${minimo ? 'già al minimo, 1' : `scendo a ${target}`}`);
       if (attive.length + inPausa.length > target && attive.length > 1) {
         const ultima = attive.reduce((x, y) => (y.apertaAt > x.apertaAt ? y : x));
         evento(`Chiudo la lez. ${ultima.l.n}: riprenderà dal punto salvato`);
@@ -158,22 +157,19 @@ export async function sessione({ cfg, context, progresso, esame, nomeEsame, logi
     const piena = misure.every((m) => m.vel >= cfg.sogliaOk && !m.inCalo);
     if (piena && misure.length === attive.length && attive.length + inPausa.length >= target && target < cfg.autoMax && prossima()) {
       target++;
-      giudizio = `tutti a velocità piena e riserva stabile: salgo a ${target}`;
-      evento(giudizio);
-      return;
+      evento(`tutti a velocità piena e riserva stabile: salgo a ${target}`);
     }
-    if (misure.some((m) => m.inCalo)) giudizio = 'riserva in calo: tengo il numero';
-    else if (!piena) giudizio = `velocità tra ${pct(cfg.sogliaLento)} e ${pct(cfg.sogliaOk)}: tengo il numero`;
-    else if (target >= cfg.autoMax) giudizio = `tutto ok, già al massimo (${cfg.autoMax})`;
-    else giudizio = 'tutto ok';
   }
 
   function schermo(ora) {
     const st = stima(esame);
     const r = [];
     r.push(`Autovisualizzatore — esame ${nomeEsame} — ${st.totali - st.rimaste}/${st.totali} lezioni complete`);
-    r.push(`Prossimo login tra ${fmt((fineSessione - ora) / 1000)}`);
-    r.push(`Video insieme: ${target}${auto ? ` (automatico, max ${cfg.autoMax}) — ${giudizio}` : ' (numero fisso)'}`);
+    const alle = new Date(fineSessione).toTimeString().slice(0, 5);
+    const minuti = Math.ceil((fineSessione - ora) / 60_000);
+    r.push(`Prossima richiesta di login alle ${alle} (tra ${minuti < 1 ? 'meno di un minuto' : durata(minuti * 60)})`);
+    r.push(`Video insieme: ${target}${auto ? ` (automatico, max ${cfg.autoMax})` : ' (numero fisso)'}`);
+    if (stato) r.push('', `→ ${stato}`);
     r.push('');
     r.push('  lez.  avanzamento        tempo              velocità  riserva');
     for (const a of attive) {
@@ -190,9 +186,9 @@ export async function sessione({ cfg, context, progresso, esame, nomeEsame, logi
       r.push(`  ${String(a.l.n).padStart(3)}  [${bar}] ${perc}  ${tempo.padEnd(18)} ${vel.padStart(6)}   ${ris.padStart(6)}`);
     }
     for (const p of inPausa) r.push(`  ${String(p.l.n).padStart(3)}  completata — pausa ancora ${fmt((p.finoA - ora) / 1000)}`);
-    if (!attive.length && !inPausa.length) r.push('  (nessuna lezione aperta)');
+    if (!attive.length && !inPausa.length && !stato) r.push('  (nessuna lezione aperta)');
     r.push('');
-    r.push(`Da guardare: ${st.rimaste} lezioni, circa ${durata(st.secondi)} di video.`);
+    r.push(`Da guardare: ${lezioni(st.rimaste)}, circa ${durata(st.secondi)} di video.`);
     if (eventi.length) r.push('', 'Ultimi eventi:', ...eventi.map((e) => `  ${e}`));
     r.push('', 'Ctrl+C per fermare: l\'avanzamento è salvato.');
     process.stdout.write('\x1b[2J\x1b[H' + r.join('\n') + '\n');
@@ -200,6 +196,7 @@ export async function sessione({ cfg, context, progresso, esame, nomeEsame, logi
 
   function fine(motivo) {
     salva(progresso);
+    stato = 'Avanzamento salvato. Faccio logout e chiudo Chrome…';
     schermo(Date.now());
     return { motivo, avviso, target };
   }
@@ -220,9 +217,12 @@ export async function sessione({ cfg, context, progresso, esame, nomeEsame, logi
     while (attive.length + inPausa.length < target) {
       const l = prossima();
       if (!l) break;
+      stato = `Apro la lezione ${l.n}…`;
+      schermo(Date.now());
       await apri(l);
       if (attive.length + inPausa.length < target) await sleep(cfg.staggerMs);
     }
+    stato = '';
     if (!attive.length && !inPausa.length) return fine('finite');
 
     for (const a of [...attive]) {

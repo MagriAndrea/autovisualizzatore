@@ -2,7 +2,7 @@
 // L'avanzamento di ogni lezione è in progresso.json: si riprende sempre da dove si era rimasti.
 import { loadConfig, launch, launchInvisible, sleep } from './browser.js';
 import { menu } from './menu.js';
-import { carica, salva, aggiornaEsame, esameCorrente, stima, durata } from './progresso.js';
+import { carica, salva, aggiornaEsame, esameCorrente, stima, durata, lezioni } from './progresso.js';
 import { sessione } from './sessione.js';
 import { loggato, isVideoteca, courseid, logoffUrl, lezioniNellaPagina } from './sito.js';
 import { tieniSveglio, notifica } from './mac.js';
@@ -36,14 +36,15 @@ async function attendi(fn) {
 
 // Apre Chrome visibile, fa logout (così i 120 minuti partono da un login nuovo) e aspetta il tuo login.
 async function login(giro) {
+  process.stdout.write('\x1b[2J\x1b[H');
+  console.log(`──────── Login${giro > 1 ? ` n. ${giro}` : ''} ────────\n`);
+  console.log('Apro Chrome e la pagina di Uninettuno…');
   const context = await launch(cfg);
   const page = context.pages()[0] || (await context.newPage());
   try { await page.goto(logoffUrl(cfg), { waitUntil: 'domcontentloaded' }); } catch (_) {}
   try { await page.goto(cfg.startUrl, { waitUntil: 'domcontentloaded' }); } catch (_) {}
 
-  process.stdout.write('\x1b[2J\x1b[H');
-  console.log(`──────── Login${giro > 1 ? ` n. ${giro}` : ''} ────────\n`);
-  console.log('Fai il LOGIN nella finestra di Chrome che si è aperta.');
+  console.log('\nFai il LOGIN nella finestra di Chrome che si è aperta.');
   if (nuovoEsame) console.log('Poi apri la VIDEOTECA dell\'esame da guardare: il programma la riconosce da solo.');
   console.log('');
 
@@ -71,6 +72,7 @@ async function login(giro) {
     // Esame già noto: vado io alla videoteca e aggiorno l'elenco (se compaiono lezioni nuove).
     id = progresso.esameCorrente;
     const salvato = progresso.esami[id];
+    console.log('Apro la videoteca dell\'esame e controllo l\'elenco delle lezioni…');
     try { await page.goto(salvato.videoteca, { waitUntil: 'domcontentloaded' }); } catch (_) {}
     await page.waitForSelector(cfg.linkSelector, { timeout: 15000 }).catch(() => {});
     const urls = await lezioniNellaPagina(page, cfg);
@@ -87,6 +89,7 @@ for (let giro = 1; ; giro++) {
   let ctx = context;
   if (cfg.invisibile === 1) {
     // Porta i cookie del login in un Chrome senza finestra, con lo stesso user agent.
+    console.log('Chiudo la finestra di Chrome e passo a Chrome invisibile…');
     const userAgent = await page.evaluate(() => navigator.userAgent).catch(() => undefined);
     const storageState = await context.storageState();
     await context.close();
@@ -119,9 +122,10 @@ for (let giro = 1; ; giro++) {
   const perche = esito.motivo === 'avviso'
     ? `il sito ha avvisato: "${esito.avviso}"`
     : `sono passati ${cfg.sessioneMinuti} minuti dal login`;
-  notifica(cfg, `Rifai il login per continuare: mancano ${st.rimaste} lezioni`);
+  const manca = st.rimaste === 1 ? 'Manca' : 'Mancano';
+  notifica(cfg, `Rifai il login per continuare: ${manca.toLowerCase()} ${lezioni(st.rimaste)}`);
   console.log(`\nSessione finita: ${perche}. Avanzamento salvato.`);
-  console.log(`Mancano ${st.rimaste} lezioni (circa ${durata(st.secondi)} di video). Riapro Chrome per il login…`);
+  console.log(`${manca} ${lezioni(st.rimaste)} (circa ${durata(st.secondi)} di video). Riapro Chrome per il login…`);
   await sleep(3000);
 }
 process.exit(0);
